@@ -415,9 +415,9 @@ class PHP_CodeSniffer
             if ($installed !== null) {
                 $standard = $installed;
             } else if (is_dir($standard) === true
-                && is_file(realpath($standard.'/ruleset.xml')) === true
+                && is_file(self::realpath($standard.'/ruleset.xml')) === true
             ) {
-                $standard = realpath($standard.'/ruleset.xml');
+                $standard = self::realpath($standard.'/ruleset.xml');
             }
 
             if (PHP_CODESNIFFER_VERBOSITY === 1) {
@@ -545,7 +545,7 @@ class PHP_CodeSniffer
      */
     public function processRuleset($rulesetPath, $depth=0)
     {
-        $rulesetPath = realpath($rulesetPath);
+        $rulesetPath = self::realpath($rulesetPath);
         if (PHP_CODESNIFFER_VERBOSITY > 1) {
             echo str_repeat("\t", $depth);
             echo "Processing ruleset $rulesetPath".PHP_EOL;
@@ -654,7 +654,7 @@ class PHP_CodeSniffer
             if (in_array($sniff, $excludedSniffs) === true) {
                 continue;
             } else {
-                $files[] = realpath($sniff);
+                $files[] = self::realpath($sniff);
             }
         }
 
@@ -753,7 +753,7 @@ class PHP_CodeSniffer
         // to absolute paths. If this fails, let the reference run through
         // the normal checks and have it fail as normal.
         if (substr($ref, 0, 1) === '.') {
-            $realpath   = realpath($rulesetDir.'/'.$ref);
+            $realpath   = self::realpath($rulesetDir.'/'.$ref);
             if ($realpath !== false) {
                 $ref = $realpath;
                 if (PHP_CODESNIFFER_VERBOSITY > 1) {
@@ -766,6 +766,15 @@ class PHP_CodeSniffer
         if (is_file($ref) === false) {
             // See if this is a whole standard being referenced.
             $path = $this->getInstalledStandardPath($ref);
+            if (self::isPharFile($path) === true && strpos($path, 'ruleset.xml') === false) {
+                // If the ruleset exists inside the phar file, use it.
+                if (file_exists($path.DIRECTORY_SEPARATOR.'ruleset.xml') === true) {
+                    $path = $path.DIRECTORY_SEPARATOR.'ruleset.xml';
+                } else {
+                    $path = null;
+                }
+            }
+
             if ($path !== null) {
                 $ref = $path;
                 if (PHP_CODESNIFFER_VERBOSITY > 1) {
@@ -796,7 +805,15 @@ class PHP_CodeSniffer
                 $newRef  = false;
                 $stdPath = $this->getInstalledStandardPath($stdName);
                 if ($stdPath !== null && $path !== '') {
-                    $newRef = realpath(dirname($stdPath).$path);
+                    if (self::isPharFile($stdPath) === true
+                        && strpos($stdPath, 'ruleset.xml') === false
+                    ) {
+                        // Phar files can only return the directory,
+                        // since ruleset can be omitted if building one standard.
+                        $newRef = self::realpath($stdPath.$path);
+                    } else {
+                        $newRef = self::realpath(dirname($stdPath).$path);
+                    }
                 }
 
                 if ($newRef === false) {
@@ -810,7 +827,7 @@ class PHP_CodeSniffer
                             continue;
                         }
 
-                        $newRef = realpath($dir.$path);
+                        $newRef = self::realpath($dir.$path);
                         
                         if ($newRef !== false) {
                             $ref = $newRef;
@@ -1146,7 +1163,11 @@ class PHP_CodeSniffer
         $files = array();
 
         foreach ($paths as $path) {
-            if (is_dir($path) === true) {
+            if (is_dir($path) === true || self::isPharFile($path) === true) {
+                if (self::isPharFile($path) === true) {
+                    $path = 'phar://'.$path;
+                }
+
                 if ($local === true) {
                     $di = new DirectoryIterator($path);
                 } else {
@@ -1159,7 +1180,7 @@ class PHP_CodeSniffer
 
                 foreach ($di as $file) {
                     // Check if the file exists after all symlinks are resolved.
-                    $filePath = realpath($file->getPathname());
+                    $filePath = self::realpath($file->getPathname());
                     if ($filePath === false) {
                         continue;
                     }
@@ -1315,7 +1336,7 @@ class PHP_CodeSniffer
             throw new PHP_CodeSniffer_Exception("Source file $file does not exist");
         }
 
-        $filePath = realpath($file);
+        $filePath = self::realpath($file);
         if ($filePath === false) {
             $filePath = $file;
         }
@@ -2065,9 +2086,15 @@ class PHP_CodeSniffer
     {
         $installedPaths = self::getInstalledStandardPaths();
         foreach ($installedPaths as $installedPath) {
-            $path = realpath($installedPath.'/'.$standard.'/ruleset.xml');
+            $standardPath = $installedPath.DIRECTORY_SEPARATOR.$standard;
+            $path         = self::realpath($standardPath.DIRECTORY_SEPARATOR.'ruleset.xml');
             if (is_file($path) === true) {
                 return $path;
+            } else if (self::isPharFile($standardPath) === true) {
+                $path = self::realpath($standardPath);
+                if ($path !== false) {
+                    return $path;
+                }
             }
         }
 
@@ -2196,6 +2223,84 @@ class PHP_CodeSniffer
         return $GLOBALS['PHP_CODESNIFFER_CONFIG_DATA'];
 
     }//end getAllConfigData()
+
+
+    /**
+     * Return TRUE, if the path is a phar file.
+     *
+     * @param string $path The path to use.
+     *
+     * @return mixed
+     */
+    public static function isPharFile($path)
+    {
+        if (strpos($path, 'phar://') === 0) {
+            return true;
+        }
+
+        return false;
+
+    }//end isPharFile()
+
+
+    /**
+     * CodeSniffer alternative for realpath.
+     *
+     * Allows for phar support.
+     *
+     * @param string $path The path to use.
+     *
+     * @return mixed
+     */
+    public static function realpath($path)
+    {
+        if (self::isPharFile($path) === false) {
+            return realpath($path);
+        }
+
+        // Before trying to break down the file path,
+        // check if it exists first because it will mostly not
+        // change after running the below code.
+        if (file_exists($path) === true) {
+            return $path;
+        }
+
+        $phar  = Phar::running(false);
+        $extra = str_replace('phar://'.$phar, '', $path);
+        $path  = realpath($phar);
+        if ($path === false) {
+            return false;
+        }
+
+        $path = 'phar://'.$path.$extra;
+        if (file_exists($path) === true) {
+            return $path;
+        }
+
+        return false;
+
+    }//end realpath()
+
+
+    /**
+     * CodeSniffer alternative for chdir().
+     *
+     * Allows for phar support.
+     *
+     * @param string $path The path to use.
+     *
+     * @return void
+     */
+    public static function chdir($path)
+    {
+        if (self::isPharFile($path) === true) {
+            $phar = Phar::running(false);
+            chdir(dirname($phar));
+        } else {
+            chdir($path);
+        }
+
+    }//end chdir()
 
 
 }//end class

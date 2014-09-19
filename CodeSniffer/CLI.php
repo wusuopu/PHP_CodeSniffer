@@ -63,6 +63,30 @@ class PHP_CodeSniffer_CLI
      */
     public $dieOnUnknownArg = true;
 
+    /**
+     * Run the PHPCS script.
+     *
+     * @return array
+     */
+    public function runphpcs()
+    {
+        if (is_file(dirname(__FILE__).'/../CodeSniffer/Reporting.php') === true) {
+            include_once dirname(__FILE__).'/../CodeSniffer/Reporting.php';
+        } else {
+            include_once 'PHP/CodeSniffer/Reporting.php';
+        }
+
+        PHP_CodeSniffer_Reporting::startTiming();
+        $this->checkRequirements();
+        $numErrors = $this->process();
+        if ($numErrors === 0) {
+            exit(0);
+        } else {
+            exit(1);
+        }
+
+    }//end runphpcs()
+
 
     /**
      * Exits if the minimum requirements of PHP_CodSniffer are not met.
@@ -342,7 +366,7 @@ class PHP_CodeSniffer_CLI
 
                 $values['sniffs'] = $sniffs;
             } else if (substr($arg, 0, 12) === 'report-file=') {
-                $values['reportFile'] = realpath(substr($arg, 12));
+                $values['reportFile'] = PHP_CodeSniffer::realpath(substr($arg, 12));
 
                 // It may not exist and return false instead.
                 if ($values['reportFile'] === false) {
@@ -366,7 +390,7 @@ class PHP_CodeSniffer_CLI
                     // Passed report file is a filename in the current directory.
                     $values['reportFile'] = getcwd().'/'.basename($values['reportFile']);
                 } else {
-                    $dir = realpath(getcwd().'/'.$dir);
+                    $dir = PHP_CodeSniffer::realpath(getcwd().'/'.$dir);
                     if ($dir !== false) {
                         // Report file path is relative.
                         $values['reportFile'] = $dir.'/'.basename($values['reportFile']);
@@ -394,7 +418,7 @@ class PHP_CodeSniffer_CLI
                                 // Passed report file is a filename in the current directory.
                                 $output = getcwd().'/'.basename($output);
                             } else {
-                                $dir = realpath(getcwd().'/'.$dir);
+                                $dir = PHP_CodeSniffer::realpath(getcwd().'/'.$dir);
                                 if ($dir !== false) {
                                     // Report file path is relative.
                                     $output = $dir.'/'.basename($output);
@@ -494,7 +518,7 @@ class PHP_CodeSniffer_CLI
             exit(2);
         }
 
-        $file = realpath($arg);
+        $file = PHP_CodeSniffer::realpath($arg);
         if (file_exists($file) === false) {
             if ($this->dieOnUnknownArg === false) {
                 return $values;
